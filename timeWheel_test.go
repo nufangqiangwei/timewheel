@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-var callbackExecNumber int
-
 func TestTimeWheel_AppendCycleFunc(t *testing.T) {
 	logFile, err := os.OpenFile("logs.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	defer logFile.Close()

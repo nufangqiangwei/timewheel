@@ -70,16 +70,6 @@ func (r *roulette) tickHandler() {
 			r.beforeRoulette.tickHandler()
 		}
 	}
-	if r.name == "day" {
-		printLog("定时器报时：%d-%02d-%02d %02d:%02d:%02d",
-			r.beforeRoulette.beforeRoulette.currentPos,
-			r.beforeRoulette.currentPos,
-			r.currentPos,
-			r.afterRoulette.currentPos,
-			r.afterRoulette.afterRoulette.currentPos,
-			r.afterRoulette.afterRoulette.afterRoulette.currentPos,
-		)
-	}
 	tasks := r.getTaskList(int64(r.currentPos))
 	if r.isLastRoulette && tasks != nil {
 		// 如果是最底层的时间轮的话就执行所有的任务
@@ -212,7 +202,7 @@ func (r *roulette) addTaskByInt(task *task) {
 		r.beforeRoulette.addTaskByInt(task)
 		return
 	}
-	printLog("%s轮盘添加一个任务,在%d时候调用%s函数，当前指针在%d", r.name, nowRouletteSite, task.jobName, r.currentPos)
+	//printLog("%s轮盘添加一个任务,在%d时候调用%s函数，当前指针在%d", r.name, nowRouletteSite, task.jobName, r.currentPos)
 
 	if nowRouletteSite == currentPos && r.name == "second" {
 		// 如果执行时间就是当前时间立即调用

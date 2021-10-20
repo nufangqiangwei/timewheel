@@ -31,6 +31,14 @@ type task struct {
 	jobName      string           // 任务标记。打印给用户看的
 }
 
+type Task struct {
+	Job     func(interface{}) // 需要执行的任务
+	JobData interface{}       // 任务参数
+	Repeat  bool              // 是否需要重复执行 false 单次任务 true 重复任务
+	Crontab Crontab           // 计划执行时间
+	JobName string            // 任务名称
+}
+
 // TimeWheel 时间轮
 type TimeWheel struct {
 	interval          time.Duration // 指针每隔多久往前移动一格
@@ -46,17 +54,11 @@ type TimeWheel struct {
 
 // 配置信息
 type WheelConfig struct {
-	Model        string // 最小时间单位
-	tickInterval int64  // 每次移动指针的时差
-	BeatSchedule []struct {
-		Job     func(interface{})
-		JobData interface{}
-		delay   int
-		crontab *Crontab
-		jobName string
-	} // 任务
-	IsRun bool        // 是否直接启动，默认需要手动调用 TimeWheel.Start
-	Log   *log.Logger // 打印日志
+	Model        string      // 最小时间单位
+	tickInterval int64       // 每次移动指针的时差
+	BeatSchedule []Task      // 任务
+	IsRun        bool        // 是否直接启动，默认需要手动调用 TimeWheel.Start
+	Log          *log.Logger // 打印日志
 }
 
 // NewTimeWheel 调用实例，需要全局唯一，
@@ -86,7 +88,7 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 	config = DefaultWheelConfig(config)
 	tw := &TimeWheel{
 		interval:          time.Duration(config.tickInterval),
-		addTaskChannel:    make(chan task),
+		addTaskChannel:    make(chan task, 10),
 		removeTaskChannel: make(chan int64),
 		stopChannel:       make(chan bool),
 		taskKeySet:        mapset.NewSet(),
@@ -130,11 +132,25 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 	tw.wheel = snapRoulette
 	tw.rootWheel = rootRoulette
 
-	tw.ticker = time.NewTicker(tw.interval)
 	if config.IsRun {
 		go tw.Start()
 	}
+	if config.BeatSchedule != nil {
+		go func() {
+			var err error
+			for _, schedule := range config.BeatSchedule {
+				if schedule.Repeat {
+					_, err = tw.AppendCycleFunc(schedule.Job, schedule.JobData, schedule.JobName, schedule.Crontab)
+				} else {
+					_, err = tw.AppendOnceFunc(schedule.Job, schedule.JobData, schedule.JobName, schedule.Crontab)
+				}
+				if err != nil {
+					printLog("%s 任务添加出错 %s", schedule.JobName, err.Error())
+				}
+			}
+		}()
 
+	}
 	return tw
 }
 
@@ -160,12 +176,13 @@ func (tw *TimeWheel) Start() {
 	}
 	printLog("定时器启动,当前时间 %s", tw.PrintTime())
 	tw.running = true
+	tw.ticker = time.NewTicker(tw.interval)
 	for {
 		select {
 		case <-tw.ticker.C:
 			tw.wheel.tickHandler()
 		case task := <-tw.addTaskChannel:
-			printLog("收到一个任务id为 %d 的任务，在 %s 调用 当前时间的 %d 秒后调用", task.key, task.crontab.beforeRunTime.PrintTime(), task.delay)
+			//printLog("收到一个任务id为 %d 的任务，在 %s 调用 当前时间的 %d 秒后调用", task.key, task.crontab.beforeRunTime.PrintTime(), task.delay)
 			tw.wheel.addTask(&task)
 		case key := <-tw.removeTaskChannel:
 			tw.rootWheel.removeTask(key)
@@ -243,13 +260,13 @@ func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab
 					printLog("%s 执行%s函数出错。错误信息为：%s", time.Now().Format("2006-01-02 15:04:05"), jobName, panicErr)
 				}
 			}()
-			//printLog("%s 执行 %s 函数", time.Now().Format("2006-01-02 15:04:05"), jobName)
-			printLog("执行 %s 函数,定时器时间是%s ", jobName, tw.PrintTime())
+			printLog("执行 %s 函数", jobName)
+			//printLog("执行 %s 函数,定时器时间是%s ", jobName, tw.PrintTime())
 			crontab.getNextExecTime(tw.getTimeDict())
 
 			tw.addTask(job, jobData, crontab, jobName, taskKey, true)
 			job(jobData)
-			printLog("预计在 % s再次调用：%s", crontab.beforeRunTime.PrintTime(), jobName)
+			printLog("%s 任务执行完成。预计在 % s再次调用：%s", jobName, crontab.beforeRunTime.PrintTime(), jobName)
 		}
 	} else {
 		taskJob = func() {
@@ -264,7 +281,7 @@ func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab
 					printLog("%s 执行%s函数出错。错误信息为：%s", time.Now().Format("2006-01-02 15:04:05"), jobName, panicErr)
 				}
 			}()
-			printLog("%s 执行%s函数", time.Now().Format("2006-01-02 15:04:05"), jobName)
+			printLog("执行 %s 函数", jobName)
 			tw.taskKeySet.Remove(taskKey)
 			job(jobData)
 		}
