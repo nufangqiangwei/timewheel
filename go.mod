@@ -1,4 +1,4 @@
-module timeWheel
+module github.com/nufangqiangwei/timewheel
 
 go 1.16
 
