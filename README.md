@@ -9,10 +9,23 @@ import (
 	"log"
 )
 
-var debugLog *log.Logger
+var (
+	callbackExecNumber  int
+	callbackExecNumber2 = 1
+	callbackExecNumber3 = 1
+	callbackExecNumber4 = 1
+	debugLog            *log.Logger
+)
 
 func main() {
-	tw := timeWheel.NewTimeWheel(&timeWheel.WheelConfig{Log: debugLog})
+	beatSchedule := []timeWheel.Task{{
+		Job:     shiyanhanshu3,
+		JobData: nil,
+		Repeat:  true,
+		Crontab: timeWheel.Crontab{Year: "2022", Month: "1,5,8,12", Day: "8,18,28"},
+		JobName: "shiyanhanshu3",
+	}}
+	tw := timeWheel.NewTimeWheel(&timeWheel.WheelConfig{Log: debugLog,BeatSchedule: beatSchedule})
 	printTimeWheelTime := func(data interface{}) {
 		printLog("执行时间：%s 执行次数: %d \n", tw.PrintTime(), callbackExecNumber)
 		callbackExecNumber++
@@ -26,13 +39,35 @@ func main() {
 func appendTask(tw *timeWheel.TimeWheel, job func(interface{}), jobData interface{}, jobName string, expiredTime timeWheel.Crontab, sleepTime time.Duration, funcName string) {
 	taskId, err := tw.AppendCycleFunc(job, jobData, jobName, expiredTime)
 	if err != nil {
-		fmt.Printf("%s 任务添加失败 %s ", funcName, err.Error())
+		printLog("%s 任务添加失败 %s ", funcName, err.Error())
 	} else {
-		fmt.Printf("%s 任务添加完成，任务id是 %d。 调用时间表是 %s ", funcName, taskId,
+		printLog("%s 任务添加完成，任务id是 %d。 调用时间表是 %s ", funcName, taskId,
 			fmt.Sprintf("{year:%s, month:%s, day:%s, hour:%s, minute:%s }", expiredTime.Year, expiredTime.Month, expiredTime.Day, expiredTime.Hour, expiredTime.Minute))
 	}
 }
 
+func shiyanhanshu1(data interface{}) {
+	printLog("1111111111 执行次数：%d \n", callbackExecNumber2)
+	callbackExecNumber2++
+}
+
+func shiyanhanshu2(data interface{}) {
+	printLog("2222222222 执行次数：%d \n", callbackExecNumber3)
+	callbackExecNumber3++
+}
+
+func shiyanhanshu3(data interface{}) {
+	printLog("333333333 执行次数：%d \n", callbackExecNumber4)
+	callbackExecNumber4++
+}
+
+func printLog(format string, v ...interface{}) {
+	if debugLog != nil {
+		debugLog.Printf(fmt.Sprintf("%s\n", format), v...)
+	} else {
+		fmt.Printf(fmt.Sprintf("%s\n", format), v...)
+	}
+}
 ```
 ### WheelConfig 介绍
     Log   输出的日志

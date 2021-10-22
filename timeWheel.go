@@ -95,22 +95,14 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 	}
 
 	logObject = config.Log
-	//ti := time.Now()
-	//timeMap := map[string]int{
-	//	"year":   ti.Year(),
-	//	"month":  int(ti.Month()),
-	//	"day":    ti.Day(),
-	//	"hour":   ti.Hour(),
-	//	"minute": ti.Minute(),
-	//	"second": ti.Second(),
-	//}
+	ti := time.Now()
 	timeMap := map[string]int{
-		"year":   2021,
-		"month":  9,
-		"day":    10,
-		"hour":   11,
-		"minute": 59,
-		"second": 59,
+		"year":   ti.Year(),
+		"month":  int(ti.Month()),
+		"day":    ti.Day(),
+		"hour":   ti.Hour(),
+		"minute": ti.Minute(),
+		"second": ti.Second(),
 	}
 	initYear = int64(timeMap["year"])
 	for _, defaultModel := range timeList {
