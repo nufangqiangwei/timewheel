@@ -154,8 +154,7 @@ func DefaultWheelConfig(config *WheelConfig) *WheelConfig {
 		config.Model = "second"
 	}
 	if config.tickInterval == 0 {
-		config.tickInterval = int64(time.Millisecond)
-		//config.tickInterval = int64(time.Second)
+		config.tickInterval = int64(time.Second)
 	}
 	return config
 }

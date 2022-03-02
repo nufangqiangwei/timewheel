@@ -1,0 +1,7 @@
+[Debug]2022/02/24 11:15:20 A debug message here
+[Info]2022/02/24 11:15:20 A Info Message here 
+[Info]2022/02/24 11:15:20 A different prefix
+[Info]2022/02/24 11:15:20 map[GOMAXPROCS:8 OS threads:5 goroutines:1 num CPU:8]
+[Info]2022/02/24 11:15:20 map[GOMAXPROCS:8 OS threads:5 goroutines:1 num CPU:8]
+[Info]2022/02/24 11:15:20 定时器启动,当前时间 2022-02-24 11:15:20
+[Info]2022/02/24 11:17:13 执行 debug任务 函数
