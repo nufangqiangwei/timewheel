@@ -2,11 +2,19 @@ package timeWheel
 
 import (
 	"container/list"
+	"time"
 )
 
 var (
 	initYear     int64
-	timeIndexMap map[string]int
+	timeIndexMap = map[string]int{
+		"year":   6,
+		"month":  5,
+		"day":    4,
+		"hour":   3,
+		"minute": 2,
+		"second": 1,
+	}
 )
 
 // TaskData 回调函数参数类型
@@ -53,8 +61,8 @@ func (r *roulette) cycle() bool {
 定时调用该方法，从最底层的轮盘开始调用，、
 相当于表盘中的秒针，每次都移动秒针，当秒针走完一圈就会带动分针走一格，依次类推
 指针指向的格子中，所有的任务全部超时
-todo 当添加时间点就是当前时间点的时候，而且需要再次向下分配的情况。就会出现一个情况不会触发分配，只能等到循环一次之后才会被调用
-todo 已解决，原因在于list.list 在循环的时候需要删除循环出来的对象导致的，需要在删除前把下一个循环对象赋值给一个中间变量
+当添加时间点就是当前时间点的时候，而且需要再次向下分配的情况。就会出现一个情况不会触发分配，只能等到循环一次之后才会被调用
+已解决，原因在于list.list 在循环的时候需要删除循环出来的对象导致的，需要在删除前把下一个循环对象赋值给一个中间变量
 */
 func (r *roulette) tickHandler() {
 	r.currentPos++
@@ -83,7 +91,7 @@ func (r *roulette) tickHandler() {
 }
 
 // 执行所有已到期的任务
-func (r roulette) runTask(taskList *list.List) {
+func (r *roulette) runTask(taskList *list.List) {
 	var next *list.Element
 	for e := taskList.Front(); e != nil; e = next {
 		next = e.Next()
@@ -148,8 +156,8 @@ func (r *roulette) removeTask(taskKey int64) {
 
 }
 
-//添加task 根据超时时间计算多久后执行任务 最大时间十年，超过十年会触发panic
-func (r *roulette) addTask(task *task) {
+// 添加task 根据超时时间计算多久后执行任务 最大时间十年，超过十年会触发panic
+func (r *roulette) addTask(task Task) {
 	if task.delay == 0 {
 		r.addTaskByTimeStamp(task)
 	} else {
@@ -158,29 +166,35 @@ func (r *roulette) addTask(task *task) {
 
 }
 
-//year 2021
-//month 8
-//day 27
-//hour 22
-//minute 30
-//second 10
+// year 2021
+// month 8
+// day 27
+// hour 22
+// minute 30
+// second 10
 //
-//300000
+// 300000
 //
-//300,000 / 60 = 5000 0  位置 10 + 0
-//5000 / 60 = 83 20  位置 30 + 20
-//83 / 24 = 3 11 位置 22 + 11 -> 9 ↓ 1
-//3 / 31 = 0 3 位置 27 + 3 + 1
+// 300,000 / 60 = 5000 0  位置 10 + 0
+// 5000 / 60 = 83 20  位置 30 + 20
+// 83 / 24 = 3 11 位置 22 + 11 -> 9 ↓ 1
+// 3 / 31 = 0 3 位置 27 + 3 + 1
 //
-//year 2021
-//month 8
-//day 31
-//hour 9
-//minute 50
-//second 10
+// year 2021
+// month 8
+// day 31
+// hour 9
+// minute 50
+// second 10
 //
-//余数是在本级中的位置，商是上层需要的计算的数字
+// 余数是在本级中的位置，商是上层需要的计算的数字
 func (r *roulette) addTaskByInt(task *task) {
+	defer func() {
+		panicErr := recover()
+		if panicErr != nil {
+			printLog("添加任务出错，roulette信息为：name:%s, slotNum:%d, currentPos:%d\n", r.name, r.slotNum, r.currentPos)
+		}
+	}()
 	slotNum := int64(r.slotNum)
 	currentPos := int64(r.currentPos)
 
@@ -256,15 +270,6 @@ func (r *roulette) addTaskByTimeStamp(task *task) {
 	go task.Job()
 }
 
-/*
-2021 10 17 12 42 10
-
-2021 10 17 15 00 0
-
-
-
-*/
-
 func newRoulette(model string, initPointer int) *roulette {
 	// 因为 月份和日都是从1开始的，所以最大列表需要比最大的要长一个
 	var (
@@ -324,6 +329,7 @@ func (r *roulette) getYearRoulette() *roulette {
 	}
 	return r.beforeRoulette.getYearRoulette()
 }
+
 func (r *roulette) getMonthRoulette() *roulette {
 	if r.name == "month" {
 		return r
@@ -335,6 +341,7 @@ func (r *roulette) getMonthRoulette() *roulette {
 		return r.beforeRoulette.getMonthRoulette()
 	}
 }
+
 func (r *roulette) getDayRoulette() *roulette {
 	if r.name == "day" {
 		return r
@@ -346,6 +353,7 @@ func (r *roulette) getDayRoulette() *roulette {
 		return r.beforeRoulette.getDayRoulette()
 	}
 }
+
 func (r *roulette) getHourRoulette() *roulette {
 	if r.name == "hour" {
 		return r
@@ -357,6 +365,7 @@ func (r *roulette) getHourRoulette() *roulette {
 		return r.beforeRoulette.getHourRoulette()
 	}
 }
+
 func (r *roulette) getMinuteRoulette() *roulette {
 	if r.name == "minute" {
 		return r
@@ -368,9 +377,56 @@ func (r *roulette) getMinuteRoulette() *roulette {
 		return r.beforeRoulette.getMinuteRoulette()
 	}
 }
+
 func (r *roulette) getSecondRoulette() *roulette {
 	if r.afterRoulette == nil {
 		return r
 	}
 	return r.afterRoulette.getSecondRoulette()
+}
+
+// 检查给定年份是否为闰年
+func isLeapYear(year int) bool {
+	return (year%4 == 0 && year%100 != 0) || (year%400 == 0)
+}
+
+// 获取给定月份的天数
+func getDaysInMonth(year, month int) int {
+	switch month {
+	case 4, 6, 9, 11:
+		return 30
+	case 2:
+		if isLeapYear(year) {
+			return 29
+		}
+		return 28
+	default:
+		return 31
+	}
+}
+
+type clock struct {
+	year   *roulette
+	month  *roulette
+	day    *roulette
+	hour   *roulette
+	minute *roulette
+	second *roulette
+}
+
+func newClock() *clock {
+	nowTime := time.Now()
+	timetable := clock{
+		year:   newRoulette("year", nowTime.Year()),
+		month:  newRoulette("month", int(nowTime.Month())),
+		day:    newRoulette("day", nowTime.Day()),
+		hour:   newRoulette("hour", nowTime.Hour()),
+		minute: newRoulette("minute", nowTime.Minute()),
+		second: newRoulette("second", nowTime.Second()),
+	}
+	return &timetable
+}
+
+func (t *clock) tickHandler() {
+
 }

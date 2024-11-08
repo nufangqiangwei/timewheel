@@ -12,7 +12,7 @@ import (
 
 var (
 	logObject *log.Logger
-	timeList  []string
+	timeList  = []string{"year", "month", "day", "hour", "minute", "second"}
 )
 
 // 是否是闰年

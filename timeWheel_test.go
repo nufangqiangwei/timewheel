@@ -38,7 +38,7 @@ func TestAppendTask(t *testing.T) {
 	//tw := NewTimeWheel(nil)
 	initYear = 2021
 	c := Crontab{
-		Day: "10,20,30",
+		Minute: "/1",
 	}
 	c.getNextExecTime(timestamp{
 		year:   2021,

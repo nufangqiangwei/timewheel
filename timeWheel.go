@@ -3,41 +3,12 @@ package timeWheel
 import (
 	"errors"
 	"fmt"
-	"github.com/deckarep/golang-set"
 	"log"
 	"math/rand"
 	"time"
+
+	mapset "github.com/deckarep/golang-set"
 )
-
-func init() {
-	timeIndexMap = map[string]int{
-		"year":   6,
-		"month":  5,
-		"day":    4,
-		"hour":   3,
-		"minute": 2,
-		"second": 1,
-	}
-	timeList = []string{"year", "month", "day", "hour", "minute", "second"}
-}
-
-// task 延时任务
-type task struct {
-	delay        int64            // 延迟时间
-	rouletteSite map[string]int64 // 在每个时间轮的位置
-	key          int64            // 定时器唯一标识, 用于删除定时器
-	Job          func()           // Job 延时任务回调函数
-	crontab      *Crontab         // 重复调用时间表
-	jobName      string           // 任务标记。打印给用户看的
-}
-
-type Task struct {
-	Job     func(interface{}) // 需要执行的任务
-	JobData interface{}       // 任务参数
-	Repeat  bool              // 是否需要重复执行 false 单次任务 true 重复任务
-	Crontab Crontab           // 计划执行时间
-	JobName string            // 任务名称
-}
 
 // TimeWheel 时间轮
 type TimeWheel struct {
@@ -46,16 +17,14 @@ type TimeWheel struct {
 	wheel             *roulette     // 时间轮
 	rootWheel         *roulette     // 最上层时间轮
 	taskKeySet        mapset.Set    //taskKey集合
-	addTaskChannel    chan task     // 新增任务channel
+	addTaskChannel    chan Task     // 新增任务channel
 	removeTaskChannel chan int64    // 删除任务channel
 	stopChannel       chan bool     // 停止定时器channel
 	running           bool
 }
 
-// 配置信息
+// WheelConfig 配置信息
 type WheelConfig struct {
-	Model        string      // 最小时间单位
-	tickInterval int64       // 每次移动指针的时差
 	BeatSchedule []Task      // 任务
 	IsRun        bool        // 是否直接启动，默认需要手动调用 TimeWheel.Start
 	Log          *log.Logger // 打印日志
@@ -65,16 +34,18 @@ type WheelConfig struct {
 // model: 模式，就是时间轮层数 年月日时分秒 year, month, day, hour, minute, second
 // tickInterval:每次转动的时间间隔
 // 使用方法
-//		tw := NewTimeWheel(&WheelConfig{})
-//		_ = tw.AppendOnceFunc(oneCallback, 1, 10)
-//		err := tw.AppendCycleFunc(callbackFunc, 2, Crontab{
-//			Second: "/5",
-//		})
-//		if err != nil {
-//			tw.Stop()
-//			println(err.Error())
-//			return
-//		}
+//
+//	tw := NewTimeWheel(&WheelConfig{})
+//	_ = tw.AppendOnceFunc(oneCallback, 1, 10)
+//	err := tw.AppendCycleFunc(callbackFunc, 2, Crontab{
+//		Second: "/5",
+//	})
+//	if err != nil {
+//		tw.Stop()
+//		println(err.Error())
+//		return
+//	}
+//
 // 工作大致说明
 // TimeWheel.Start() 开始入口 ，通过监听*time.Ticker 每秒执行一次 TimeWheel.wheel.tickHandler() 这个方法
 // 该方法每次执行都会在时间上 +1秒 ，每一个时间指针都指向一个list.List 链表，链表内存有 task 对象，被指针指到的链表，其内部所有的 task 都到了
@@ -87,8 +58,8 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 	)
 	config = DefaultWheelConfig(config)
 	tw := &TimeWheel{
-		interval:          time.Duration(config.tickInterval),
-		addTaskChannel:    make(chan task, 10),
+		interval:          time.Second,
+		addTaskChannel:    make(chan Task, 10),
 		removeTaskChannel: make(chan int64),
 		stopChannel:       make(chan bool),
 		taskKeySet:        mapset.NewSet(),
@@ -107,11 +78,6 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 	initYear = int64(timeMap["year"])
 	for _, defaultModel := range timeList {
 		snapRoulette = newRoulette(defaultModel, timeMap[defaultModel])
-		if defaultModel == config.Model {
-			lastRoulette.afterRoulette = snapRoulette
-			snapRoulette.beforeRoulette = lastRoulette
-			break
-		}
 		if defaultModel == "year" {
 			rootRoulette = snapRoulette
 			lastRoulette = snapRoulette
@@ -129,6 +95,7 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 	}
 	if config.BeatSchedule != nil {
 		go func() {
+			// 防止队列阻塞，所以使用goroutine
 			var err error
 			for _, schedule := range config.BeatSchedule {
 				if schedule.Repeat {
@@ -150,16 +117,10 @@ func DefaultWheelConfig(config *WheelConfig) *WheelConfig {
 	if config == nil {
 		config = &WheelConfig{}
 	}
-	if config.Model == "" {
-		config.Model = "second"
-	}
-	if config.tickInterval == 0 {
-		config.tickInterval = int64(time.Second)
-	}
 	return config
 }
 
-// 开始
+// Start 开始
 func (tw *TimeWheel) Start() {
 	if tw.running {
 		printLog("已启动，无需再次启动")
@@ -185,12 +146,12 @@ func (tw *TimeWheel) Start() {
 	}
 }
 
-// 停止
+// Stop 停止
 func (tw *TimeWheel) Stop() {
 	tw.stopChannel <- true
 }
 
-// 添加单次任务
+// AppendOnceFunc 添加单次任务
 // job 回调函数
 // jobData 回调函数的调用参数
 // jobName 任务标记，打印出给用户查看
@@ -207,11 +168,11 @@ func (tw *TimeWheel) AppendOnceFunc(job func(interface{}), jobData interface{}, 
 	if jobName == "" {
 		jobName = getFunctionName(job)
 	}
-	tw.addTask(job, jobData, &expiredTime, jobName, taskKey, false)
+	err = tw.addTask(job, jobData, &expiredTime, jobName, taskKey, false)
 	return
 }
 
-// 添加重复任务
+// AppendCycleFunc 添加重复任务
 // job 回调函数
 // jobData 回调函数的调用参数
 // jobName 任务标记，打印出给用户查看
@@ -231,12 +192,12 @@ func (tw *TimeWheel) AppendCycleFunc(job func(interface{}), jobData interface{},
 		jobName = getFunctionName(job)
 	}
 	printLog("%s 初次添加%s任务", expiredTime.beforeRunTime.PrintTime(), jobName)
-	tw.addTask(job, jobData, &expiredTime, jobName, taskKey, true)
+	err = tw.addTask(job, jobData, &expiredTime, jobName, taskKey, true)
 	return
 }
 
 // 统一处理回调函数，如果想在执行回调函数的时候做什么事情，就在这修改
-func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab *Crontab, jobName string, taskKey int64, isCycle bool) {
+func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab *Crontab, jobName string, taskKey int64, isCycle bool) error {
 	var taskJob func()
 	if isCycle {
 		taskJob = func() {
@@ -278,6 +239,9 @@ func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab
 		}
 	}
 	tw.taskKeySet.Add(taskKey)
+	if len(tw.addTaskChannel) >= 10 && !tw.running {
+		return errors.New("添加任务过多，请先调用 Start 启动定时器")
+	}
 	tw.addTaskChannel <- task{
 		delay: crontab.ExpiredTime,
 		rouletteSite: map[string]int64{
@@ -295,7 +259,7 @@ func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab
 	}
 }
 
-// 删除指定的回调任务
+// RemoveTask 删除指定的回调任务
 func (tw *TimeWheel) RemoveTask(taskKey int64) {
 	if !tw.taskKeySet.Contains(taskKey) {
 		// taskKey 不存在
@@ -343,7 +307,7 @@ func (tw *TimeWheel) getTime() (year, month, day, hour, minute, second int) {
 	return
 }
 
-//  获取当前定时器时间 字符串
+// PrintTime 获取当前定时器时间 字符串
 func (tw *TimeWheel) PrintTime() string {
 	year, month, day, hour, minute, second := tw.getTime()
 	return fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second)
