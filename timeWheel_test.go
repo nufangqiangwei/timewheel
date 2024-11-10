@@ -1,9 +1,11 @@
 package timeWheel
 
 import (
+	"encoding/json"
 	"log"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestTimeWheel_AppendCycleFunc(t *testing.T) {
@@ -21,33 +23,29 @@ func TestTimeWheel_AppendCycleFunc(t *testing.T) {
 	debugLog.Println("A different prefix")
 
 	tw := NewTimeWheel(&WheelConfig{Log: debugLog})
-	printTimeWheelTime := func(data interface{}) {
+	printTimeWheelTime := func() {
 		println("执行时间：", tw.PrintTime(), "执行次数：", callbackExecNumber)
 		callbackExecNumber++
 	}
-	go tw.AppendCycleFunc(printTimeWheelTime, 2, "测试任务", Crontab{Day: "10,20,30"})
+	go tw.AppendCycleFunc(printTimeWheelTime, "", 30, "")
+	go func() {
+		time.Sleep(time.Second)
+		tw.AppendCycleFunc(func() {
+			allTask := tw.GetAllTask()
+			da, err := json.Marshal(allTask)
+			if err != nil {
+				println(err.Error())
+
+			} else {
+				println(string(da))
+			}
+		}, "打印全部任务", 10, "")
+	}()
 	tw.Start()
+	println("结束")
 }
 
 func printTimeWheelTime(data interface{}) {
 	println("执行时间：", "执行次数：", 1)
 	panic("挂掉")
-}
-
-func TestAppendTask(t *testing.T) {
-	//tw := NewTimeWheel(nil)
-	initYear = 2021
-	c := Crontab{
-		Minute: "/1",
-	}
-	c.getNextExecTime(timestamp{
-		year:   2021,
-		month:  10,
-		day:    10,
-		hour:   11,
-		minute: 31,
-		second: 51,
-	})
-	println(c.beforeRunTime.PrintTime())
-
 }

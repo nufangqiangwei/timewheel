@@ -1,8 +1,8 @@
 package timeWheel
 
 import (
+	"container/list"
 	"errors"
-	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -14,13 +14,13 @@ import (
 type TimeWheel struct {
 	interval          time.Duration // 指针每隔多久往前移动一格
 	ticker            *time.Ticker  // 时间间隔
-	wheel             *roulette     // 时间轮
-	rootWheel         *roulette     // 最上层时间轮
+	*clock                          // 时钟
 	taskKeySet        mapset.Set    //taskKey集合
 	addTaskChannel    chan Task     // 新增任务channel
 	removeTaskChannel chan int64    // 删除任务channel
 	stopChannel       chan bool     // 停止定时器channel
-	running           bool
+	running           bool          // 是否正在运行
+	config            *WheelConfig
 }
 
 // WheelConfig 配置信息
@@ -51,11 +51,6 @@ type WheelConfig struct {
 // 该方法每次执行都会在时间上 +1秒 ，每一个时间指针都指向一个list.List 链表，链表内存有 task 对象，被指针指到的链表，其内部所有的 task 都到了
 // 执行时间，
 func NewTimeWheel(config *WheelConfig) *TimeWheel {
-	var (
-		rootRoulette *roulette // 根节点
-		snapRoulette *roulette // 当前
-		lastRoulette *roulette // 上一个轮盘
-	)
 	config = DefaultWheelConfig(config)
 	tw := &TimeWheel{
 		interval:          time.Second,
@@ -63,53 +58,15 @@ func NewTimeWheel(config *WheelConfig) *TimeWheel {
 		removeTaskChannel: make(chan int64),
 		stopChannel:       make(chan bool),
 		taskKeySet:        mapset.NewSet(),
+		config:            config,
 	}
 
 	logObject = config.Log
-	ti := time.Now()
-	timeMap := map[string]int{
-		"year":   ti.Year(),
-		"month":  int(ti.Month()),
-		"day":    ti.Day(),
-		"hour":   ti.Hour(),
-		"minute": ti.Minute(),
-		"second": ti.Second(),
-	}
-	initYear = int64(timeMap["year"])
-	for _, defaultModel := range timeList {
-		snapRoulette = newRoulette(defaultModel, timeMap[defaultModel])
-		if defaultModel == "year" {
-			rootRoulette = snapRoulette
-			lastRoulette = snapRoulette
-			continue
-		}
-		lastRoulette.afterRoulette = snapRoulette
-		snapRoulette.beforeRoulette = lastRoulette
-		lastRoulette = snapRoulette
-	}
-	tw.wheel = snapRoulette
-	tw.rootWheel = rootRoulette
 
 	if config.IsRun {
 		go tw.Start()
 	}
-	if config.BeatSchedule != nil {
-		go func() {
-			// 防止队列阻塞，所以使用goroutine
-			var err error
-			for _, schedule := range config.BeatSchedule {
-				if schedule.Repeat {
-					_, err = tw.AppendCycleFunc(schedule.Job, schedule.JobData, schedule.JobName, schedule.Crontab)
-				} else {
-					_, err = tw.AppendOnceFunc(schedule.Job, schedule.JobData, schedule.JobName, schedule.Crontab)
-				}
-				if err != nil {
-					printLog("%s 任务添加出错 %s", schedule.JobName, err.Error())
-				}
-			}
-		}()
 
-	}
 	return tw
 }
 
@@ -126,18 +83,41 @@ func (tw *TimeWheel) Start() {
 		printLog("已启动，无需再次启动")
 		return
 	}
-	printLog("定时器启动,当前时间 %s", tw.PrintTime())
+	if tw.clock == nil {
+		tw.clock = newClock()
+		tw.clock.wheel = tw
+	} else {
+		tw.clock.resetTime()
+	}
+	printLog("定时器启动,当前时间 %s", tw.clock.getNowTime().Format("2006-01-02 15:04:05"))
 	tw.running = true
-	tw.ticker = time.NewTicker(tw.interval)
+	if tw.ticker == nil {
+		tw.ticker = time.NewTicker(tw.interval)
+	}
+	if tw.config.BeatSchedule != nil {
+		go func() {
+			// 防止队列阻塞，所以使用goroutine
+			var err error
+			for _, task := range tw.config.BeatSchedule {
+				_, err = tw.AppendTask(task)
+				if err != nil {
+					printLog("%s 任务添加出错 %s", task.GetJobName(), err.Error())
+				}
+			}
+		}()
+	}
 	for {
 		select {
 		case <-tw.ticker.C:
-			tw.wheel.tickHandler()
+			tw.clock.tickHandler()
 		case task := <-tw.addTaskChannel:
 			//printLog("收到一个任务id为 %d 的任务，在 %s 调用 当前时间的 %d 秒后调用", task.key, task.crontab.beforeRunTime.PrintTime(), task.delay)
-			tw.wheel.addTask(&task)
+			err := tw.clock.addTask(task)
+			if err != nil {
+				printLog("%s 任务添加出错 %s", task.GetJobName(), err.Error())
+			}
 		case key := <-tw.removeTaskChannel:
-			tw.rootWheel.removeTask(key)
+			tw.clock.year.removeTask(key)
 		case <-tw.stopChannel:
 			tw.ticker.Stop()
 			tw.running = false
@@ -156,19 +136,31 @@ func (tw *TimeWheel) Stop() {
 // jobData 回调函数的调用参数
 // jobName 任务标记，打印出给用户查看
 // expiredTime Crontab 对象
-func (tw *TimeWheel) AppendOnceFunc(job func(interface{}), jobData interface{}, jobName string, expiredTime Crontab) (taskKey int64, err error) {
-	//if !tw.running {
-	//	return 0, errors.New("定时器尚未启动，请先调用 Start 启动定时器")
-	//}
-	timeParams := expiredTime.getNextExecTime(tw.getTimeDict())
-	if timeParams > 10*365*24*60*60 {
-		return 0, errors.New("时间最长不能超过十年")
+func (tw *TimeWheel) AppendOnceFunc(job func(), jobName string, delay int64, crontab string) (taskKey int64, err error) {
+	if !tw.running {
+		return 0, errors.New("定时器尚未启动，请先调用 Start 启动定时器")
 	}
-	taskKey = tw.randomTaskKey()
 	if jobName == "" {
 		jobName = getFunctionName(job)
 	}
-	err = tw.addTask(job, jobData, &expiredTime, jobName, taskKey, false)
+	taskKey = tw.randomTaskKey()
+	printLog("添加%s任务", jobName)
+	task := &selfTask{
+		jobName: jobName,
+		key:     taskKey,
+	}
+	if delay > 0 {
+		task.expiredTime = expiredTime(delay)
+	} else if crontab != "" {
+		task.crontab = crontab
+	}
+	task.Job = func() {
+		// 不需要重复执行的任务，在这里将调度对象至空
+		task.schedule = nil
+		job()
+	}
+
+	tw.addTask(task)
 	return
 }
 
@@ -177,86 +169,42 @@ func (tw *TimeWheel) AppendOnceFunc(job func(interface{}), jobData interface{}, 
 // jobData 回调函数的调用参数
 // jobName 任务标记，打印出给用户查看
 // expiredTime Crontab 对象
-func (tw *TimeWheel) AppendCycleFunc(job func(interface{}), jobData interface{}, jobName string, expiredTime Crontab) (taskKey int64, err error) {
+func (tw *TimeWheel) AppendCycleFunc(job func(), jobName string, delay int64, crontab string) (taskKey int64, err error) {
 	//if !tw.running {
 	//	return 0, errors.New("定时器尚未启动，请先调用 Start 启动定时器")
 	//}
-	timeParams := expiredTime.getNextExecTime(tw.getTimeDict())
-	//fmt.Printf("重复任务下次执行时间: %d\n", timeParams)
-
-	if timeParams > 10*365*24*60*60 {
-		return 0, errors.New("时间最长不能超过十年")
-	}
 	taskKey = tw.randomTaskKey()
 	if jobName == "" {
 		jobName = getFunctionName(job)
 	}
-	printLog("%s 初次添加%s任务", expiredTime.beforeRunTime.PrintTime(), jobName)
-	err = tw.addTask(job, jobData, &expiredTime, jobName, taskKey, true)
+	printLog("添加%s任务", jobName)
+	task := &selfTask{
+		Job:     job,
+		jobName: jobName,
+		key:     taskKey,
+	}
+	if delay > 0 {
+		task.expiredTime = expiredTime(delay)
+	} else if crontab != "" {
+		task.crontab = crontab
+	}
+	tw.addTask(task)
 	return
 }
 
-// 统一处理回调函数，如果想在执行回调函数的时候做什么事情，就在这修改
-func (tw *TimeWheel) addTask(job func(interface{}), jobData interface{}, crontab *Crontab, jobName string, taskKey int64, isCycle bool) error {
-	var taskJob func()
-	if isCycle {
-		taskJob = func() {
-			defer func() {
-				panicErr := recover()
-				if panicErr != nil {
-					_, ok := panicErr.(TimeOut)
-					if ok {
-						printLog("%s 任务所有指定时间全部执行完毕，任务不在执行", jobName)
-						return
-					}
-					printLog("%s 执行%s函数出错。错误信息为：%s", time.Now().Format("2006-01-02 15:04:05"), jobName, panicErr)
-				}
-			}()
-			printLog("执行 %s 函数", jobName)
-			//printLog("执行 %s 函数,定时器时间是%s ", jobName, tw.PrintTime())
-			crontab.getNextExecTime(tw.getTimeDict())
+func (tw *TimeWheel) AppendTask(task Task) (taskKey int64, err error) {
+	if !tw.running {
+		return 0, errors.New("定时器尚未启动，请先调用 Start 启动定时器")
+	}
+	taskKey = tw.randomTaskKey()
+	task.SetTaskKey(taskKey)
+	tw.addTask(task)
+	return
+}
 
-			tw.addTask(job, jobData, crontab, jobName, taskKey, true)
-			job(jobData)
-			printLog("%s 任务执行完成。预计在 % s再次调用：%s", jobName, crontab.beforeRunTime.PrintTime(), jobName)
-		}
-	} else {
-		taskJob = func() {
-			defer func() {
-				panicErr := recover()
-				if panicErr != nil {
-					_, ok := panicErr.(TimeOut)
-					if ok {
-						printLog("%s 任务所有指定时间全部执行完毕，任务不在执行", jobName)
-						return
-					}
-					printLog("%s 执行%s函数出错。错误信息为：%s", time.Now().Format("2006-01-02 15:04:05"), jobName, panicErr)
-				}
-			}()
-			printLog("执行 %s 函数", jobName)
-			tw.taskKeySet.Remove(taskKey)
-			job(jobData)
-		}
-	}
-	tw.taskKeySet.Add(taskKey)
-	if len(tw.addTaskChannel) >= 10 && !tw.running {
-		return errors.New("添加任务过多，请先调用 Start 启动定时器")
-	}
-	tw.addTaskChannel <- task{
-		delay: crontab.ExpiredTime,
-		rouletteSite: map[string]int64{
-			"year":   int64(crontab.beforeRunTime.year),
-			"month":  int64(crontab.beforeRunTime.month),
-			"day":    int64(crontab.beforeRunTime.day),
-			"hour":   int64(crontab.beforeRunTime.hour),
-			"minute": int64(crontab.beforeRunTime.minute),
-			"second": int64(crontab.beforeRunTime.second),
-		},
-		key:     taskKey,
-		Job:     taskJob,
-		crontab: crontab,
-		jobName: jobName,
-	}
+// 统一处理回调函数，如果想在执行回调函数的时候做什么事情，就在这修改。会出现多线程同时调用这个方法。需要考虑线程安全
+func (tw *TimeWheel) addTask(task Task) {
+	tw.addTaskChannel <- task
 }
 
 // RemoveTask 删除指定的回调任务
@@ -297,25 +245,58 @@ func (tw *TimeWheel) expiredTimeParsing(timeParams interface{}) (int64, error) {
 }
 
 // 获取当前定时器时间 集合
-func (tw *TimeWheel) getTime() (year, month, day, hour, minute, second int) {
-	year = tw.rootWheel.getYearRoulette().currentPos
-	month = tw.rootWheel.getMonthRoulette().currentPos
-	day = tw.rootWheel.getDayRoulette().currentPos
-	hour = tw.rootWheel.getHourRoulette().currentPos
-	minute = tw.rootWheel.getMinuteRoulette().currentPos
-	second = tw.rootWheel.getSecondRoulette().currentPos
-	return
+func (tw *TimeWheel) getTime() time.Time {
+	return tw.clock.getNowTime()
 }
 
 // PrintTime 获取当前定时器时间 字符串
 func (tw *TimeWheel) PrintTime() string {
-	year, month, day, hour, minute, second := tw.getTime()
-	return fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second)
+	return tw.clock.getNowTime().Format("2006-01-02 15:04:05")
 }
 
-// 获取当前定时器时间 timestamp 对象
-func (tw *TimeWheel) getTimeDict() (result timestamp) {
-	result = timestamp{}
-	result.year, result.month, result.day, result.hour, result.minute, result.second = tw.getTime()
+type ManageTask struct {
+	Name          string
+	TaskId        int64
+	ScheduleTable Schedule
+	JobName       string
+	FuncName      string
+	ExecNumber    int64
+	LastRunTime   *time.Time
+	NextRunTime   time.Time
+}
+
+func (tw *TimeWheel) GetAllTask() []ManageTask {
+	var result []ManageTask
+	result = make([]ManageTask, 0)
+	result = append(result, getRouletteTaskInfo(tw.year)...)
+	result = append(result, getRouletteTaskInfo(tw.month)...)
+	result = append(result, getRouletteTaskInfo(tw.day)...)
+	result = append(result, getRouletteTaskInfo(tw.hour)...)
+	result = append(result, getRouletteTaskInfo(tw.minute)...)
+	result = append(result, getRouletteTaskInfo(tw.second)...)
+	return nil
+}
+func getRouletteTaskInfo(r *roulette) (result []ManageTask) {
+	var next *list.Element
+	result = make([]ManageTask, 0)
+	for i := 0; i < len(r.slots); i++ {
+		if r.slots[i] == nil {
+			continue
+		}
+		for e := r.slots[i].Front(); e != nil; e = next {
+			next = e.Next()
+			task := e.Value.(Task)
+			result = append(result, ManageTask{
+				Name:          task.GetJobName(),
+				TaskId:        task.GetTaskKey(),
+				ScheduleTable: task.GetSchedule(),
+				JobName:       task.GetJobName(),
+				FuncName:      getFunctionName(task),
+				ExecNumber:    task.GetExecNumber(),
+				LastRunTime:   task.GetLastRunTime(),
+				NextRunTime:   task.GetSchedule().NextRunTime(r.clock.getNowTime()),
+			})
+		}
+	}
 	return result
 }

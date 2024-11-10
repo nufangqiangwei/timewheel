@@ -15,40 +15,51 @@ type timestamp struct {
 	second int
 }
 
+type timestampTimeType string
+
+const (
+	timestampYear   timestampTimeType = "year"
+	timestampMonth  timestampTimeType = "month"
+	timestampDay    timestampTimeType = "day"
+	timestampHour   timestampTimeType = "hour"
+	timestampMinute timestampTimeType = "minute"
+	timestampSecond timestampTimeType = "second"
+)
+
 // 指定的时间刻度+1
-func (t *timestamp) addUp(timeType string) {
+func (t *timestamp) addUp(timeType timestampTimeType) {
 	switch timeType {
-	case "year":
+	case timestampYear:
 		t.year++
-	case "month":
+	case timestampMonth:
 		t.month++
 		if t.month == 13 {
 			t.month = 1
 			t.year++
 		}
-	case "day":
+	case timestampDay:
 		t.day++
 		if t.day == getMonthDay(t.year, t.month)+1 {
 			t.day = 1
-			t.addUp("month")
+			t.addUp(timestampMonth)
 		}
-	case "hour":
+	case timestampHour:
 		t.hour++
 		if t.hour == 24 {
 			t.hour = 0
-			t.addUp("day")
+			t.addUp(timestampDay)
 		}
-	case "minute":
+	case timestampMinute:
 		t.minute++
 		if t.minute == 60 {
 			t.minute = 0
-			t.addUp("hour")
+			t.addUp(timestampHour)
 		}
-	case "second":
+	case timestampSecond:
 		t.second++
 		if t.second == 60 {
 			t.second = 0
-			t.addUp("minute")
+			t.addUp(timestampMinute)
 		}
 	default:
 		panic("错误类型")
@@ -172,7 +183,7 @@ func (t timestamp) PrintTime() string {
 	return fmt.Sprintf("%d-%02d-%02d %02d:%02d:%02d", t.year, t.month, t.day, t.hour, t.minute, t.second)
 }
 
-//传入的时间是否是将来的时间，就是判断传入的时间比当前时间大
+// 传入的时间是否是将来的时间，就是判断传入的时间比当前时间大
 func (t timestamp) isFutureTime(ti timestamp) bool {
 	// 如果时间相同那就返回 false
 	if t.year == ti.year && t.month == ti.month && t.day == ti.day && t.hour == ti.hour && t.minute == ti.minute && t.second == ti.second {
@@ -185,4 +196,12 @@ func (t timestamp) isFutureTime(ti timestamp) bool {
 	tTimeStamp, _ := time.Parse("2006-01-02 15:04:05", t.PrintTime())
 	tiTimeStamp, _ := time.Parse("2006-01-02 15:04:05", ti.PrintTime())
 	return tTimeStamp.Before(tiTimeStamp)
+}
+
+// 在当前时间上前进多少秒
+func (t *timestamp) addTime(second int64) {
+	for second > 0 {
+		t.addUp(timestampSecond)
+		second--
+	}
 }
