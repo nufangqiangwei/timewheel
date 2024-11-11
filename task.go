@@ -3,15 +3,15 @@ package timeWheel
 import "time"
 
 type Task interface {
-	RunJob()
-	GetSchedule() Schedule
-	NextRunTime(time.Time) time.Time
-	GetJobName() string
-	SetTaskKey(key int64)
-	GetTaskKey() int64
-	GetLastRunTime() *time.Time
-	SetLastRunTime(t time.Time)
-	GetExecNumber() int64
+	RunJob()                         // 执行任务,最好在这里记录下上次的执行时间
+	GetSchedule() Schedule           // 获取任务执行计划，主要用于再api接口去展示
+	NextRunTime(time.Time) time.Time // 获取下次运行时间,建议实现的时候。先使用上次运行时间去计算，没有的话就使用当前时间
+	GetJobName() string              // 任务标记。打印给用户看的
+	SetTaskKey(key int64)            // 用于设置任务唯一标识，这个需要保留
+	GetTaskKey() int64               // 用于获取任务唯一标识
+	GetLastRunTime() *time.Time      // 上次的执行时间，可以返回nil
+	SetLastRunTime(t time.Time)      // 设置上次的执行时间
+	GetExecNumber() int64            // 执行次数
 }
 
 // task 延时任务
@@ -23,6 +23,7 @@ type selfTask struct {
 	key          int64            // 定时器唯一标识, 用于删除定时器
 	Job          func()           // Job 延时任务回调函数
 	jobName      string           // 任务标记。打印给用户看的
+	funcName     string           // 任务标记。打印给用户看的
 	schedule     Schedule
 	lastRunTime  *time.Time
 	execNumber   int64 // 执行次数
@@ -65,4 +66,10 @@ func (st *selfTask) SetLastRunTime(t time.Time) {
 }
 func (st *selfTask) GetExecNumber() int64 {
 	return st.execNumber
+}
+func (st *selfTask) NextRunTime(nowTime time.Time) time.Time {
+	if st.lastRunTime != nil {
+		nowTime = *st.lastRunTime
+	}
+	return st.GetSchedule().NextRunTime(nowTime)
 }

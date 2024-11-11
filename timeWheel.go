@@ -3,6 +3,7 @@ package timeWheel
 import (
 	"container/list"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"time"
@@ -140,14 +141,16 @@ func (tw *TimeWheel) AppendOnceFunc(job func(), jobName string, delay int64, cro
 	if !tw.running {
 		return 0, errors.New("定时器尚未启动，请先调用 Start 启动定时器")
 	}
+	functionName := getFunctionName(job)
 	if jobName == "" {
-		jobName = getFunctionName(job)
+		jobName = functionName
 	}
 	taskKey = tw.randomTaskKey()
 	printLog("添加%s任务", jobName)
 	task := &selfTask{
-		jobName: jobName,
-		key:     taskKey,
+		jobName:  jobName,
+		key:      taskKey,
+		funcName: functionName,
 	}
 	if delay > 0 {
 		task.expiredTime = expiredTime(delay)
@@ -265,6 +268,27 @@ type ManageTask struct {
 	NextRunTime   time.Time
 }
 
+func (m *ManageTask) MarshalJSON() ([]byte, error) {
+	var scheduleTable, lastRunTime string
+	switch st := m.ScheduleTable.(type) {
+	case *expiredTime:
+		scheduleTable = fmt.Sprintf("固定延时：%d秒", st)
+	case expiredTime:
+		scheduleTable = fmt.Sprintf("固定延时：%d秒", st)
+	case *Crontab:
+		scheduleTable = st.String()
+	default:
+		scheduleTable = "未知的类型"
+	}
+	if m.LastRunTime != nil {
+		lastRunTime = m.LastRunTime.Format("2006-01-02 15:04:05")
+	} else {
+		lastRunTime = "未执行"
+	}
+	result := []byte(fmt.Sprintf(`{"name":"%s","taskId":%d,"scheduleTable":"%s","jobName":"%s","execNumber":%d,"lastRunTime":"%s","nextRunTime":"%s"}`, m.Name, m.TaskId, scheduleTable, m.JobName, m.ExecNumber, lastRunTime, m.NextRunTime.Format("2006-01-02 15:04:05")))
+	return result, nil
+}
+
 func (tw *TimeWheel) GetAllTask() []ManageTask {
 	var result []ManageTask
 	result = make([]ManageTask, 0)
@@ -276,6 +300,7 @@ func (tw *TimeWheel) GetAllTask() []ManageTask {
 	result = append(result, getRouletteTaskInfo(tw.second)...)
 	return nil
 }
+
 func getRouletteTaskInfo(r *roulette) (result []ManageTask) {
 	var next *list.Element
 	result = make([]ManageTask, 0)

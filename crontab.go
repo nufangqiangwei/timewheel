@@ -39,12 +39,22 @@ func (c *Crontab) NextRunTime(nowTime time.Time) time.Time {
 		if err != nil {
 			panic(CrontabError{err.Error()})
 		}
-
 	}
 	return c.crontabParser.NextRunTime(nowTime)
 }
 func (c *Crontab) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"Crontab 调度，表达式为%s"`, c.Spec)), nil
+}
+func (c *Crontab) String() string {
+	switch c.crontabParser.(type) {
+	case *specSchedule:
+		return fmt.Sprintf("Crontab 调度，表达式为%s", c.Spec)
+	case *ConstantDelaySchedule:
+		return fmt.Sprintf("Crontab 调度，固定间隔执行，间隔是：%s", c.Spec)
+	default:
+		return fmt.Sprintf("Crontab 调度，表达式为%s", c.Spec)
+	}
+
 }
 
 // Configuration options for creating a parser. Most options specify which
