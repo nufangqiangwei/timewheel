@@ -155,7 +155,7 @@ func (tw *TimeWheel) AppendOnceFunc(job func(), jobName string, delay int64, cro
 	if delay > 0 {
 		task.expiredTime = expiredTime(delay)
 	} else if crontab != "" {
-		task.crontab = crontab
+		task.crontab = &Crontab{Spec: crontab}
 	}
 	task.Job = func() {
 		// 不需要重复执行的任务，在这里将调度对象至空
@@ -189,7 +189,7 @@ func (tw *TimeWheel) AppendCycleFunc(job func(), jobName string, delay int64, cr
 	if delay > 0 {
 		task.expiredTime = expiredTime(delay)
 	} else if crontab != "" {
-		task.crontab = crontab
+		task.crontab = &Crontab{Spec: crontab}
 	}
 	tw.addTask(task)
 	return
@@ -277,6 +277,10 @@ func (m *ManageTask) MarshalJSON() ([]byte, error) {
 		scheduleTable = fmt.Sprintf("固定延时：%d秒", st)
 	case *Crontab:
 		scheduleTable = st.String()
+	case *specSchedule:
+		scheduleTable = st.ToString()
+	case *ConstantDelaySchedule:
+		scheduleTable = st.ToString()
 	default:
 		scheduleTable = "未知的类型"
 	}

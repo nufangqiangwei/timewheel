@@ -12,33 +12,32 @@ type CrontabError struct {
 	Msg string
 }
 
-func (c *CrontabError) Error() string {
+func (c CrontabError) Error() string {
 	return "Crontab Error:" + c.Msg
 }
 
-// Crontab 时间执行表 +++++++++++++++++++++++++++++++++++++++++++++++++++
-// 字符串 按照给定的数字，当时间到给定的刻度就会执行
-// 比如 Crontab{Minute:10,Second:30} 每个小时的十分三十秒的时候就会执行
-// 支持一次传入多个时间点 Crontab{Minute:"10,11,12",Second:30}每个小时的10：30，11：30，12：30三个时间点执行
-// 连续时间点可以用-表示 Minute:"10-12" 代表 Minute:"10,11,12"
-// 也可以 /5表示当时间点可以被5整除的时候就执行任务 前面可以写自己指定的时间段 默认的是当前时间段的起止 比如 秒 就是0-59
-// 10-20/5 表示当时间点在 10 15 20 这三个时间点执行任务
-// 参照python的celery的crontab实现的
-//
-// 也可以直接传一个间隔时间，会以当前的时间点为起点，向后推迟到目标时间点执行任务
+// Crontab 时间执行表
 type Crontab struct {
 	Spec          string
 	crontabParser Schedule
 }
 
-// NextRunTime 获取下次运行时间
-func (c *Crontab) NextRunTime(nowTime time.Time) time.Time {
+func (c *Crontab) init() error {
 	if c.crontabParser == nil {
 		var err error
 		c.crontabParser, err = standardParser.parse(c.Spec)
 		if err != nil {
-			panic(CrontabError{err.Error()})
+			return CrontabError{err.Error()}
 		}
+	}
+	return nil
+}
+
+// NextRunTime 获取下次运行时间
+func (c *Crontab) NextRunTime(nowTime time.Time) time.Time {
+	err := c.init()
+	if err != nil {
+		panic(err)
 	}
 	return c.crontabParser.NextRunTime(nowTime)
 }
@@ -659,6 +658,10 @@ func (s *specSchedule) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"Crontab.specSchedule 调度，表达式为: %d, %d, %d, %d, %d, %d"`, s.Second, s.Minute, s.Hour, s.Dom, s.Month, s.Dow)), nil
 }
 
+func (s *specSchedule) ToString() string {
+	return fmt.Sprintf("%d %d %d %d %d %d", s.Second, s.Minute, s.Hour, s.Dom, s.Month, s.Dow)
+}
+
 // dayMatches returns true if the schedule's day-of-week and day-of-month
 // restrictions are satisfied by the given time.
 func dayMatches(s *specSchedule, t time.Time) bool {
@@ -702,4 +705,7 @@ func (schedule *ConstantDelaySchedule) NextRunTime2(t time.Time) time.Time {
 }
 func (schedule *ConstantDelaySchedule) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"Crontab.constantDelaySchedule 调度，表达式为: %d"`, schedule.Delay)), nil
+}
+func (schedule *ConstantDelaySchedule) ToString() string {
+	return fmt.Sprintf("%d", schedule.Delay)
 }

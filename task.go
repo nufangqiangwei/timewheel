@@ -16,8 +16,8 @@ type Task interface {
 
 // task 延时任务
 type selfTask struct {
-	expiredTime         // 延迟时间
-	crontab      string // 重复调用时间表
+	expiredTime           // 延迟时间
+	crontab      *Crontab // 重复调用时间表
 	delay        int64
 	rouletteSite map[string]int64 // 在每个时间轮的位置
 	key          int64            // 定时器唯一标识, 用于删除定时器
@@ -37,12 +37,12 @@ func (st *selfTask) RunJob() {
 }
 func (st *selfTask) GetSchedule() Schedule {
 	if st.schedule == nil {
-		if st.crontab != "" {
-			var err error
-			st.schedule, err = standardParser.parse(st.crontab)
+		if st.crontab != nil {
+			err := st.crontab.init()
 			if err != nil {
 				panic(CrontabError{err.Error()})
 			}
+			st.schedule = st.crontab
 		} else if st.expiredTime > 0 {
 			st.schedule = &st.expiredTime
 		}
